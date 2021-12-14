@@ -1,1 +1,1 @@
-# lifelong-learning-with-pretraining-and-sam
+# lifelong-learning-pretraining-and-sam
