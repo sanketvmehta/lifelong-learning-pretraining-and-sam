@@ -1,9 +1,7 @@
 # lifelong-learning-pretraining-and-sam
 
-## Description
-This is the code repository for the paper "[An Empirical Investigation of the Role of
-Pre-training in Lifelong Learning](https://arxiv.org/abs/2112.09153)". It contains all code necessary to replicate the 
-experiments and figures discussed in the paper.
+Code for the paper "Mehta, S. V., Patil, D., Chandar, S., & Strubell, E. (2021). [An empirical investigation of the role of pre-training in lifelong learning](https://arxiv.org/abs/2112.09153). arXiv preprint arXiv:2112.09153."
+ 
 ## Installation
 
 ### Requirements
