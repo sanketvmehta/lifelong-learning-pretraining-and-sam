@@ -124,7 +124,8 @@ To run the sharpness analysis, we run following command:
 Run a similar command for the pre-trained models.
 
 ## Citation
-When using this code, please cite our paper:
+If you use our code in your research, please cite: [An empirical investigation of the role of pre-training in lifelong learning](https://arxiv.org/abs/2112.09153)
+
 ```
 @article{mehta2021empirical,
   title={An empirical investigation of the role of pre-training in lifelong learning},

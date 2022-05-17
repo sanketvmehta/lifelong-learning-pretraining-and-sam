@@ -1,5 +1,5 @@
 #!/bin/bash
-. activate lll-nlp
+. activate lll
 
 if [[ ${1} = '5data' ]]
 then
