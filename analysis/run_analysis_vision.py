@@ -11,6 +11,7 @@ from img_exps.data import pt_data
 from img_exps.vision_utils import ResNet
 from tqdm import tqdm
 
+from analysis.loss_landscape import calculate_loss_contours
 from analysis.sharpness import sharpness
 from analysis.utils import flatten_gradients
 
@@ -124,6 +125,34 @@ def run_sharpness(model, model_checkpoints, dataloaders, device, p=100):
     return dict(results)
 
 
+def run_contour(model, model_checkpoints, dataloaders, device, task=0):
+    """Creates the loss contours for the loss on the specified task.
+    For the specified task, calculates the loss contours for points close to the
+    model checkpoints specified by the first three checkpoints in
+    model_checkpoints.
+    Args:
+        model: Instantiation of the model to calculate loss contour for.
+        model_checkpoints: Array from which the first three checkpoints will be
+            used to specify the points around which the loss contours will be
+            created.
+        dataloaders: Dataloaders corresponding to each task.
+        device: Device that all evaluation should be done on.
+        task: Task for which loss contour will be created.
+    """
+    model1 = model
+    model2 = deepcopy(model)
+    model3 = deepcopy(model)
+    load_checkpoint(model1, model_checkpoints[0])
+    load_checkpoint(model2, model_checkpoints[1])
+    load_checkpoint(model3, model_checkpoints[2])
+    model1 = model1.to(device=device)
+    model2 = model2.to(device=device)
+    model3 = model3.to(device=device)
+    return calculate_loss_contours(
+        model1, model2, model3, dataloaders[task]["test"], create_eval_fn(task), device
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-r", "--run-folder", required=True)
@@ -175,6 +204,11 @@ def main():
     # Run analysis
     if args.analysis == "sharpness":
         results = run_sharpness(model, model_checkpoints, dataloaders, args.device)
+    elif args.analysis == "contour":
+        model_checkpoints = model_checkpoints[args.start:]
+        results = run_contour(
+            model, model_checkpoints, dataloaders, args.device, args.start
+        )
     else:
         raise ValueError(f"Analysis type {args.analysis} not supported")
 
