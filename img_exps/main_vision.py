@@ -7,8 +7,15 @@ from collections import defaultdict
 import numpy as np
 import torch
 from tqdm import tqdm
+from img_exps.sam import SAM, disable_running_stats, enable_running_stats
 
-from img_exps.data.pt_data import get_5_dataset, get_cifar_50, get_split_cifar100
+from img_exps.data.pt_data import (
+    get_5_dataset,
+    get_cifar_50,
+    get_split_cifar100,
+    get_split_mnist,
+)
+from img_exps.existing_methods.agem import AGEM
 from img_exps.existing_methods.er import ER
 from img_exps.existing_methods.ewc import EWC
 from img_exps.vision_utils import (
@@ -17,36 +24,24 @@ from img_exps.vision_utils import (
     extract_logits,
     ResNet,
 )
-from img_exps.sam import SAM
-
-def disable_running_stats(m):
-    if isinstance(m, torch.nn.BatchNorm2d):
-        m.backup_momentum = m.momentum
-        m.momentum = 0
-
-def enable_running_stats(m):
-    if isinstance(m, torch.nn.BatchNorm2d):
-        m.momentum = m.backup_momentum
 
 
-def eval_single_epoch(model, loader, criterion, device, task_id=None):
+def eval_single_epoch(model, loader, criterion, args, task_id=None):
     """
     Evaluate the current model on test dataset of the given task_id
-
-    Args:
-        net: Current model
-        loader: Test data loader
-        criterion: Loss function
-        device: device on which to run evaluation
-        task_id: Task identity
+    :param net: Current model
+    :param loader: Test data loader
+    :param criterion: Loss function
+    :param task_id: Task identity
+    :return:
     """
     model.eval()
     test_loss = 0
     correct = 0
     with torch.no_grad():
         for X, y in loader:
-            X = X.to(device)
-            y = y.to(device)
+            X = X.to(args.device)
+            y = y.to(args.device)
             output = model(X, task_id)
             test_loss += criterion(output, y).item()
             pred = torch.argmax(output, dim=1)
@@ -57,63 +52,58 @@ def eval_single_epoch(model, loader, criterion, device, task_id=None):
 
 
 def train_single_epoch(
-    algo, model, dataloader, criterion, optimizer, classes_per_task, args, task_id=None
+    algo,
+    model,
+    dataloader,
+    criterion,
+    optimizer,
+    classes_per_task,
+    args,
+    task_id=None,
+    sam=False,
 ):
-    """Train model for single epoch.
-
-    Args:
-        algo: Algorithm object used during training of model.
-        model: Model to be trained.
-        dataloader: Train dataloader.
-        optimizer: Optimizer to be used in training.
-        classes_per_task: How many classes in each task.
-        args: Contains other relevant arguments used in training.
-        task_id: Which task is currently being trained on.
-    """
     model.train()
     for X, y in iter(dataloader):
+        model.zero_grad()
+        if sam:
+            enable_running_stats(model)
 
-        if args.method == "sam":
-            model.zero_grad()
-            X = X.to(args.device)
-            y = y.to(args.device)
-
-            # first forward-backward step
-            model.apply(disable_running_stats)
-            # enable_running_stats(model)  # <- this is the important line
-            out = model(X, task_id)
-            loss = criterion(out, y)
-            loss.mean().backward()
-            optimizer.first_step(zero_grad=True)
-
-            # second forward-backward step
-            model.apply(enable_running_stats)
-            # disable_running_stats(model)  # <- this is the important line
-            criterion(model(X, task_id), y).mean().backward()
-            optimizer.second_step(zero_grad=True)
-        else:
-            model.zero_grad()
-            X = X.to(args.device)
-            y = y.to(args.device)
-            out = model(X, task_id)
-            if args.method == "er":
-                if task_id > 0:
-                    mem_x, mem_y, mem_task_ids = algo.sample(
-                        args.batch_size, exclude_task=None, pr=False
-                    )
-                    mem_pred = model(mem_x, None)
-                    mem_pred = extract_logits(
-                        mem_pred, mem_task_ids, classes_per_task, args.device
-                    )
-                    loss_mem = criterion(mem_pred, mem_y)
-                    loss_mem.backward()
-                algo.add_reservoir(X, y, None, task_id)
-            elif args.method == "ewc":
-                loss_ewc = args.lambd * algo.penalty(model)
-                loss_ewc.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
+        X = X.to(args.device)
+        y = y.to(args.device)
+        out = model(X, task_id)
+        if args.method == "er":
+            if task_id > 0:
+                mem_x, mem_y, mem_task_ids = algo.sample(
+                    args.batch_size, exclude_task=None, pr=False
+                )
+                mem_pred = model(mem_x, None)
+                mem_pred = extract_logits(
+                    mem_pred, mem_task_ids, classes_per_task, args.device
+                )
+                loss_mem = criterion(mem_pred, mem_y)
+                loss_mem.backward()
+            algo.add_reservoir(X, y, None, task_id)
+        elif args.method == "ewc":
+            loss_ewc = args.lambd * algo.penalty(model)
+            loss_ewc.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
+        elif args.method == "agem":
+            model = algo.observe_agem(model, X, task_id, y)
+        if args.method != "agem":
             loss = criterion(out, y)
             loss.backward()
+        if sam:
+            optimizer.first_step(zero_grad=True)
+            disable_running_stats(model)
+            criterion(model(X, task_id), y).backward()
+            if args.method == "er" and task_id > 0:
+                mem_pred = model(mem_x, None)
+                mem_pred = extract_logits(
+                    mem_pred, mem_task_ids, classes_per_task, args.device
+                )
+                criterion(mem_pred, mem_y).backward()
+            optimizer.second_step(zero_grad=True)
+        else:
             optimizer.step()
 
 
@@ -124,32 +114,37 @@ def run_cl(
     num_classes,
     classes_per_task,
     pretrained=False,
+    class_incremental=False,
+    sam=False,
     logfile="log.json",
 ):
-    """Runs continual learning.
-
-    Args:
-        args: contains all the relevant arguments from command line.
-        dataloaders: List of dataloaders that will be used in continual learning.
-        num_classes: Total number of classes that will be encountered.
-        classes_per_task: Number of classes per task.
-        pretrained: Whether to use a pretrained initialization for the ResNet.
-        logfile: Where to log results.
-    """
     model = ResNet(
         num_classes,
         classes_per_task,
+        layers=args.layers,
         pretrained=pretrained,
+        pt_type=args.pt_type,
+        checkpoint=args.checkpoint,
+        dropout=args.dropout,
     ).to(device=args.device)
-    if args.method == "sam":
-        base_optimizer = torch.optim.SGD  # define an optimizer for the "sharpness-aware" update
-        optimizer = SAM(model.parameters(), base_optimizer, lr=args.lr)
+
+    if sam:
+        optimizer = SAM(model.parameters(), torch.optim.SGD, rho=args.rho, lr=args.lr)
     else:
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
     criterion = torch.nn.CrossEntropyLoss().to(args.device)
     algo = None
     if args.method == "er":
         algo = ER(args, num_classes)
+    elif args.method == "agem":
+        algo = AGEM(
+            args,
+            model,
+            optimizer,
+            criterion,
+            classes_per_task,
+            len(dataloaders),
+        )
     elif args.method == "ewc":
         algo = EWC(model, criterion)
 
@@ -177,13 +172,14 @@ def run_cl(
                 optimizer,
                 classes_per_task,
                 args,
-                task_id,
+                0 if class_incremental else task_id,
+                sam,
             )
         if args.method == "ewc":
             loader = torch.utils.data.DataLoader(
                 train_loader.dataset, batch_size=200, shuffle=True
             )
-            algo.update(model, task_id, loader)
+            algo.update(model, 0 if class_incremental else task_id, loader)
 
         if args.save_models:
             torch.save(
@@ -196,7 +192,11 @@ def run_cl(
         for eval_task_id in range(task_id + 1):
             test_loader = dataloaders[eval_task_id]["test"]
             metrics = eval_single_epoch(
-                model, test_loader, criterion, args.device, eval_task_id
+                model,
+                test_loader,
+                criterion,
+                args,
+                0 if class_incremental else eval_task_id,
             )
             full_metrics["accuracies"][eval_task_id].append(metrics["accuracy"])
             full_metrics["losses"][eval_task_id].append(metrics["loss"])
@@ -227,16 +227,6 @@ def run_lr_hs(
     classes_per_task,
     pretrained,
 ):
-    """Runs hyperparameter search over learning rates.
-
-    Args:
-        args: contains all the relevant arguments from command line.
-        dataloaders: List of dataloaders that will be used in hyperparameter search.
-        num_classes: Total number of classes that will be encountered.
-        task_split: Which task split to use for hyperparameter search.
-        classes_per_task: Number of classes per task.
-        pretrained: Whether to use a pretrained initialization for the ResNet.
-    """
     best_acc = 0
     best_lr = None
     results = []
@@ -270,9 +260,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-folder", default="./data")
     parser.add_argument(
-        "-d", "--dataset", default="cifar50", choices=["cifar50", "5data", "cifar100"]
+        "-d",
+        "--dataset",
+        default="cifar50",
+        choices=["cifar50", "5data", "cifar100", "mnist"],
     )
     parser.add_argument("--output-folder", default="./out")
+    parser.add_argument("--checkpoint")
     parser.add_argument("-t", "--task-split")
     parser.add_argument("-s", "--seed", type=int, default=42)
     parser.add_argument("-r", "--runs", type=int, default=1)
@@ -281,7 +275,9 @@ def main():
     parser.add_argument("--pretrained", action="store_true")
     parser.add_argument("--run-hs", action="store_true")
     parser.add_argument("--batch-size", default=10, type=int, help="batch-size")
-    parser.add_argument("--lr", default=0.01, type=float, help="learning rate")
+    parser.add_argument("--layers", default=18, type=int, choices=[18, 34, 50])
+    parser.add_argument("--pt-type", choices=["ssl", "swsl"])
+    parser.add_argument("--lr", default=0.1, type=float, help="learning rate")
     parser.add_argument(
         "--gamma", default=1.0, type=float, help="lr decay. Use 1.0 for no decay"
     )
@@ -293,7 +289,15 @@ def main():
     )
     parser.add_argument("--lambd", default=1, type=int, help="EWC")
     parser.add_argument("--mem-size", default=1, type=int, help="mem")
-    parser.add_argument("--method", default="sgd", choices=["sgd", "er", "ewc", "sam", "asam", "ssgd"])
+    parser.add_argument(
+        "--method", default="sgd", choices=["sgd", "multi", "er", "ewc", "agem", "ssgd"]
+    )
+    parser.add_argument("--class-incremental", action="store_true")
+    parser.add_argument("--sam", action="store_true")
+    parser.add_argument(
+        "--rho", default=0.05, type=float, help="neighborhood parameter for sam"
+    )
+    parser.add_argument("--val", action="store_true")
     args = parser.parse_args()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     args.device = device
@@ -305,12 +309,11 @@ def main():
     else:
         task_split = None
 
-    # Create dataloaders
     if args.dataset == "cifar50":
         dataloaders, task_split = get_cifar_50(
             args.data_folder,
             args.batch_size,
-            args.run_hs,
+            args.val,
             saved_tasks=task_split,
         )
         num_classes = 50
@@ -319,7 +322,7 @@ def main():
         dataloaders, task_split = get_5_dataset(
             args.data_folder,
             args.batch_size,
-            args.run_hs,
+            args.val,
             saved_tasks=task_split,
         )
         num_classes = 50
@@ -328,14 +331,24 @@ def main():
         dataloaders, task_split = get_split_cifar100(
             args.data_folder,
             args.batch_size,
-            args.run_hs,
+            args.val,
             saved_tasks=task_split,
         )
         num_classes = 100
         classes_per_task = 5
+    elif args.dataset == "mnist":
+        dataloaders, task_split = get_split_mnist(
+            args.data_folder,
+            args.batch_size,
+            args.val,
+            saved_tasks=task_split,
+        )
+        num_classes = 10
+        classes_per_task = 2
     else:
         raise ValueError(f"Dataset {args.dataset} not supported")
-
+    if args.class_incremental:
+        num_classes = classes_per_task
     print(vars(args))
     os.makedirs(args.output_folder, exist_ok=True)
     with open(os.path.join(args.output_folder, "task_split.json"), "w") as f:
@@ -365,6 +378,8 @@ def main():
             num_classes,
             classes_per_task,
             args.pretrained,
+            args.class_incremental,
+            args.sam,
         )
 
 
