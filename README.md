@@ -1,6 +1,6 @@
 # lifelong-learning-pretraining-and-sam
 
-Code for the paper "Mehta, S. V., Patil, D., Chandar, S., & Strubell, E. (2021). [An empirical investigation of the role of pre-training in lifelong learning](https://arxiv.org/abs/2112.09153). arXiv preprint arXiv:2112.09153."
+Code for the paper "Mehta, S. V., Patil, D., Chandar, S., & Strubell, E. (2023). [An Empirical Investigation of the Role of Pre-training in Lifelong Learning](https://jmlr.org/papers/v24/22-0496.html). The Journal of Machine Learning Research 24 (2023)"
  
 ## Installation
 
@@ -110,7 +110,7 @@ for each dataset of interest (`5data, cifar50, cifar100`).
 
 #### A. Vision
 
-To run the sharpness analysis, we run following command:
+To run the sharpness analysis, we run the following command:
 ```
 ./scripts/run_vision_analysis.sh \
     {DATASET} \
@@ -124,13 +124,17 @@ To run the sharpness analysis, we run following command:
 Run a similar command for the pre-trained models.
 
 ## Citation
-If you use our code in your research, please cite: [An empirical investigation of the role of pre-training in lifelong learning](https://arxiv.org/abs/2112.09153)
+If you use our code in your research, please cite: [An Empirical Investigation of the Role of Pre-training in Lifelong Learning](https://jmlr.org/papers/v24/22-0496.html)
 
 ```
-@article{mehta2021empirical,
-  title={An empirical investigation of the role of pre-training in lifelong learning},
-  author={Mehta, Sanket Vaibhav and Patil, Darshan and Chandar, Sarath and Strubell, Emma},
-  journal={arXiv preprint arXiv:2112.09153},
-  year={2021}
+@article{JMLR:v24:22-0496,
+  author  = {Sanket Vaibhav Mehta and Darshan Patil and Sarath Chandar and Emma Strubell},
+  title   = {An Empirical Investigation of the Role of Pre-training in Lifelong Learning},
+  journal = {Journal of Machine Learning Research},
+  year    = {2023},
+  volume  = {24},
+  number  = {214},
+  pages   = {1--50},
+  url     = {http://jmlr.org/papers/v24/22-0496.html}
 }
 ```
