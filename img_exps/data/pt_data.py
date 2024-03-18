@@ -77,7 +77,8 @@ def create_task_transform(class_to_task_class):
     return torchvision.transforms.Lambda(lambda x: (x[0], class_to_task_class[x[1]]))
 
 
-def get_split_cifar100(dataset_location, batch_size, get_val=False, saved_tasks=None):
+def get_split_cifar100(dataset_location, batch_size, get_val=False, saved_tasks=None,
+                       get_subset=False, num_subset_examples=100, subset_batch_size=64):
     """Get Split CIFAR-100 dataset that is split randomly. Returns the dataloaders
     for each task and the task split.
 
@@ -87,6 +88,9 @@ def get_split_cifar100(dataset_location, batch_size, get_val=False, saved_tasks=
         get_val: Whether to get validation version of train and test dataloaders.
         saved_tasks: If None, generates a new task split. Otherwise should contain
             the saved task split.
+        get_subset: Whether to get subset of examples as separate dataloader.
+        num_subset_examples: Number of examples in subset dataloader.
+        subset_batch_size: Batch size for subset dataloader.
     """
     transform = torchvision.transforms.Compose(
         [
@@ -123,6 +127,69 @@ def get_split_cifar100(dataset_location, batch_size, get_val=False, saved_tasks=
 
     # Create the dataloaders for each task
     dataloaders = []
+    subset_dataloaders = []
+    for task_id, task in enumerate(tasks):
+        train_subset = FilteredDataset(
+            train_dataset,
+            create_cifar_filter_func(task, False),
+            transform=create_task_transform(class_to_task_class),
+            metainfo_func=lambda dataset, i: dataset.targets[i],
+        )
+        if get_val:
+            train_subset, test_subset = get_random_split(train_subset, 0.9)
+        else:
+            test_subset = FilteredDataset(
+                test_dataset,
+                create_cifar_filter_func(task, False),
+                transform=create_task_transform(class_to_task_class),
+                metainfo_func=lambda dataset, i: dataset.targets[i],
+            )
+        task_dataloaders = {
+            "train": get_dataloader(train_subset, batch_size, shuffle=True),
+            "test": get_dataloader(test_subset, batch_size, shuffle=False),
+        }
+        dataloaders.append(task_dataloaders)
+
+        if get_subset:
+            train_task_subset = get_random_subset(dataset=train_subset, num_examples=num_subset_examples)
+            train_subset_loader = torch.utils.data.DataLoader(train_task_subset, batch_size=subset_batch_size,
+                                                              shuffle=True)
+            subset_dataloaders.append(train_subset_loader)
+
+    if get_subset:
+        return dataloaders, tasks, subset_dataloaders
+
+    return dataloaders, tasks
+
+
+def get_split_mnist(dataset_location, batch_size, get_val=False, saved_tasks=None):
+    transform = torchvision.transforms.Compose(
+        [
+            torchvision.transforms.Lambda(lambda x: x.convert("RGB")),
+            torchvision.transforms.Resize(224),
+            torchvision.transforms.ToTensor(),
+            torchvision.transforms.Normalize(
+                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+            ),
+        ]
+    )
+    train_dataset = torchvision.datasets.MNIST(
+        dataset_location, True, transform=transform, download=False
+    )
+    test_dataset = torchvision.datasets.MNIST(
+        dataset_location, False, transform=transform, download=False
+    )
+    classes = list(range(10))
+    random.shuffle(classes)
+    tasks = [classes[i * 2 : (i + 1) * 2] for i in range(5)]
+    if saved_tasks is not None:
+        tasks = saved_tasks
+    class_to_task_class = {}
+    for task in tasks:
+        for task_class, class_id in enumerate(task):
+            class_to_task_class[class_id] = task_class
+
+    dataloaders = []
     for task_id, task in enumerate(tasks):
         train_subset = FilteredDataset(
             train_dataset,
@@ -147,7 +214,8 @@ def get_split_cifar100(dataset_location, batch_size, get_val=False, saved_tasks=
     return dataloaders, tasks
 
 
-def get_cifar_50(dataset_location, batch_size, get_val=False, saved_tasks=None):
+def get_cifar_50(dataset_location, batch_size, get_val=False, saved_tasks=None,
+                 get_subset=False, num_subset_examples=50, subset_batch_size=64):
     """Get Split CIFAR-50 dataset that is split randomly. Returns the dataloaders
     for each task and the task split.
 
@@ -157,6 +225,9 @@ def get_cifar_50(dataset_location, batch_size, get_val=False, saved_tasks=None):
         get_val: Whether to get validation version of train and test dataloaders.
         saved_tasks: If None, generates a new task split. Otherwise should contain
             the saved task split.
+        get_subset: Whether to get subset of examples as separate dataloader.
+        num_subset_examples: Number of examples in subset dataloader.
+        subset_batch_size: Batch size for subset dataloader.
     """
     if get_val:
         target_transform = torchvision.transforms.Lambda(lambda x: x - 50)
@@ -196,6 +267,7 @@ def get_cifar_50(dataset_location, batch_size, get_val=False, saved_tasks=None):
             class_to_task_class[class_id] = task_class
 
     dataloaders = []
+    subset_dataloaders = []
     for task_id, task in enumerate(tasks):
         train_subset = FilteredDataset(
             train_dataset,
@@ -214,10 +286,21 @@ def get_cifar_50(dataset_location, batch_size, get_val=False, saved_tasks=None):
             "test": get_dataloader(test_subset, batch_size, shuffle=False),
         }
         dataloaders.append(task_dataloaders)
+
+        if get_subset:
+            train_task_subset = get_random_subset(dataset=train_subset, num_examples=num_subset_examples)
+            train_subset_loader = torch.utils.data.DataLoader(train_task_subset, batch_size=subset_batch_size,
+                                                              shuffle=True)
+            subset_dataloaders.append(train_subset_loader)
+
+    if get_subset:
+        return dataloaders, tasks, subset_dataloaders
+
     return dataloaders, tasks
 
 
-def get_5_dataset(dataset_location, batch_size, get_val=False, saved_tasks=None):
+def get_5_dataset(dataset_location, batch_size, get_val=False, saved_tasks=None,
+                  get_subset=False, num_subset_examples=50, subset_batch_size=64):
     """Get 5-dataset that has a random task order. Returns the dataloaders
     for each task and the task order.
 
@@ -227,6 +310,9 @@ def get_5_dataset(dataset_location, batch_size, get_val=False, saved_tasks=None)
         get_val: Whether to get validation version of train and test dataloaders.
         saved_tasks: If None, generates a new task order. Otherwise should contain
             the saved task order.
+        get_subset: Whether to get subset of examples as separate dataloader.
+        num_subset_examples: Number of examples in subset dataloader.
+        subset_batch_size: Batch size for subset dataloader.
     """
     tasks = [
         "cifar10",
@@ -239,10 +325,22 @@ def get_5_dataset(dataset_location, batch_size, get_val=False, saved_tasks=None)
     if saved_tasks is not None:
         tasks = saved_tasks
     dataloaders = []
+    subset_dataloaders = []
     for task in tasks:
-        dataloaders.append(
-            get_dataset(task, batch_size, dataset_location, get_val=get_val)
-        )
+        if get_subset:
+            dataloader, subset_dataloader = get_dataset(task, batch_size, dataset_location, get_val=get_val,
+                                                        get_subset=get_subset, num_subset_examples=num_subset_examples,
+                                                        subset_batch_size=subset_batch_size)
+            subset_dataloaders.append(subset_dataloader)
+        else:
+            dataloader = get_dataset(task, batch_size, dataset_location, get_val=get_val,
+                                     get_subset=get_subset, num_subset_examples=num_subset_examples,
+                                     subset_batch_size=subset_batch_size)
+        dataloaders.append(dataloader)
+
+    if get_subset:
+        return dataloaders, tasks, subset_dataloaders
+
     return dataloaders, tasks
 
 
@@ -256,6 +354,18 @@ def get_random_split(dataset, split):
     dataset_1 = torch.utils.data.Subset(dataset, indices[:split_index])
     dataset_2 = torch.utils.data.Subset(dataset, indices[split_index:])
     return dataset_1, dataset_2
+
+
+def get_random_subset(dataset, num_examples):
+    """Randomly splits dataset according to num examples, and returns the first
+    subset.
+    """
+    indices = np.arange(len(dataset))
+    np.random.shuffle(indices)
+    split_index = min(len(indices), num_examples)
+    dataset_1 = torch.utils.data.Subset(dataset, indices[:split_index])
+
+    return dataset_1
 
 
 def check_not_mnist_files(path):
@@ -286,7 +396,8 @@ def get_not_mnist(dataset_location, transform):
     return train_dataset, test_dataset
 
 
-def get_dataset(dataset_name, batch_size, dataset_location, get_val=False):
+def get_dataset(dataset_name, batch_size, dataset_location, get_val=False,
+                get_subset=False, num_subset_examples=50, subset_batch_size=64):
     """Gets each dataset in 5-dataset.
     Args:
         dataset_name: Which dataset to construct. Must be one of "mnist",
@@ -294,6 +405,9 @@ def get_dataset(dataset_name, batch_size, dataset_location, get_val=False):
         batch_size: Batch size for all dataloaders.
         dataset_location: Where 5-dataset is stored or where to download it.
         get_val: Whether to get validation version of train and test dataloaders.
+        get_subset: Whether to get subset of examples as separate dataloader.
+        num_subset_examples: Number of examples in subset dataloader.
+        subset_batch_size: Batch size for subset dataloader.
     """
     dataset_location = os.path.join(dataset_location, dataset_name)
     transforms_list = [
@@ -353,4 +467,10 @@ def get_dataset(dataset_name, batch_size, dataset_location, get_val=False):
         "train": get_dataloader(train_dataset, batch_size, shuffle=True),
         "test": get_dataloader(test_dataset, batch_size),
     }
+
+    if get_subset:
+        train_task_subset = get_random_subset(dataset=train_dataset, num_examples=num_subset_examples)
+        train_subset_loader = torch.utils.data.DataLoader(train_task_subset, batch_size=subset_batch_size, shuffle=True)
+        return dataloaders, train_subset_loader
+
     return dataloaders

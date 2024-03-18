@@ -24,6 +24,7 @@ def download_data(dataset, folder):
         )
         url = "http://yaroslavvb.com/upload/notMNIST/notMNIST_small.tar.gz"
         r = requests.get(url, allow_redirects=True)
+        os.makedirs(os.path.join(folder, "not_mnist"), exist_ok=True)
         open(os.path.join(folder, "not_mnist", "notMNIST_small.tar.gz"), "wb").write(
             r.content
         )

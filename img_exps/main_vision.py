@@ -35,6 +35,7 @@ def eval_single_epoch(model, loader, criterion, args, task_id=None):
     :param task_id: Task identity
     :return:
     """
+    model.to(args.device)
     model.eval()
     test_loss = 0
     correct = 0
@@ -61,9 +62,12 @@ def train_single_epoch(
     args,
     task_id=None,
     sam=False,
+    subset_dataloader=None,
 ):
     model.train()
+    count = 0
     for X, y in iter(dataloader):
+        count += 1
         model.zero_grad()
         if sam:
             enable_running_stats(model)
@@ -89,6 +93,7 @@ def train_single_epoch(
             torch.nn.utils.clip_grad_norm_(model.parameters(), 100)
         elif args.method == "agem":
             model = algo.observe_agem(model, X, task_id, y)
+
         if args.method != "agem":
             loss = criterion(out, y)
             loss.backward()
@@ -116,6 +121,7 @@ def run_cl(
     pretrained=False,
     class_incremental=False,
     sam=False,
+    subset_dataloaders=None,
     logfile="log.json",
 ):
     model = ResNet(
@@ -125,13 +131,15 @@ def run_cl(
         pretrained=pretrained,
         pt_type=args.pt_type,
         checkpoint=args.checkpoint,
+        num_exclu_classes=args.num_excluded_classes,
         dropout=args.dropout,
+        method=args.method,
     ).to(device=args.device)
 
     if sam:
         optimizer = SAM(model.parameters(), torch.optim.SGD, rho=args.rho, lr=args.lr)
     else:
-        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
+        optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum)
     criterion = torch.nn.CrossEntropyLoss().to(args.device)
     algo = None
     if args.method == "er":
@@ -156,24 +164,29 @@ def run_cl(
 
     for task_id, task in enumerate(task_split):
         print(f"Task {task_id}: {task}")
+
+        epochs_per_task = args.epochs_per_task
         lr = max(args.lr * (args.gamma ** task_id), 0.00005)
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
         train_loader = dataloaders[task_id]["train"]
-        iterator = range(args.epochs_per_task)
-        if args.epochs_per_task > 1:
+        subset_dataloader = subset_dataloaders[task_id] if subset_dataloaders is not None else None
+
+        iterator = range(epochs_per_task)
+        if epochs_per_task > 1:
             iterator = tqdm(iterator)
         for _ in iterator:
             train_single_epoch(
-                algo,
-                model,
-                train_loader,
-                criterion,
-                optimizer,
-                classes_per_task,
-                args,
-                0 if class_incremental else task_id,
-                sam,
+                algo=algo,
+                model=model,
+                dataloader=train_loader,
+                subset_dataloader=subset_dataloader,
+                criterion=criterion,
+                optimizer=optimizer,
+                classes_per_task=classes_per_task,
+                args=args,
+                task_id=0 if class_incremental else task_id,
+                sam=sam,
             )
         if args.method == "ewc":
             loader = torch.utils.data.DataLoader(
@@ -267,6 +280,7 @@ def main():
     )
     parser.add_argument("--output-folder", default="./out")
     parser.add_argument("--checkpoint")
+    parser.add_argument("--num-excluded-classes", type=int, default=267)
     parser.add_argument("-t", "--task-split")
     parser.add_argument("-s", "--seed", type=int, default=42)
     parser.add_argument("-r", "--runs", type=int, default=1)
@@ -277,7 +291,8 @@ def main():
     parser.add_argument("--batch-size", default=10, type=int, help="batch-size")
     parser.add_argument("--layers", default=18, type=int, choices=[18, 34, 50])
     parser.add_argument("--pt-type", choices=["ssl", "swsl"])
-    parser.add_argument("--lr", default=0.1, type=float, help="learning rate")
+    parser.add_argument("--lr", default=0.01, type=float, help="learning rate")
+    parser.add_argument("--momentum", default=0.0, type=float, help="momentum")
     parser.add_argument(
         "--gamma", default=1.0, type=float, help="lr decay. Use 1.0 for no decay"
     )
@@ -285,7 +300,7 @@ def main():
         "--dropout", default=0.0, type=float, help="Use 0.0 for no dropout"
     )
     parser.add_argument(
-        "--epochs-per-task", default=1, type=int, help="epochs per task"
+        "--epochs-per-task", default=5, type=int, help="epochs per task"
     )
     parser.add_argument("--lambd", default=1, type=int, help="EWC")
     parser.add_argument("--mem-size", default=1, type=int, help="mem")
@@ -308,6 +323,8 @@ def main():
             task_split = json.load(f)
     else:
         task_split = None
+
+    subset_dataloaders = None
 
     if args.dataset == "cifar50":
         dataloaders, task_split = get_cifar_50(
@@ -372,14 +389,15 @@ def main():
         )
     else:
         run_cl(
-            args,
-            dataloaders,
-            task_split,
-            num_classes,
-            classes_per_task,
-            args.pretrained,
-            args.class_incremental,
-            args.sam,
+            args=args,
+            dataloaders=dataloaders,
+            task_split=task_split,
+            num_classes=num_classes,
+            classes_per_task=classes_per_task,
+            pretrained=args.pretrained,
+            class_incremental=args.class_incremental,
+            sam=args.sam,
+            subset_dataloaders=subset_dataloaders
         )
 
 

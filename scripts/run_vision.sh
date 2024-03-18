@@ -8,6 +8,8 @@ SEED=${5}
 PT=${6}
 EPOCHS=${7}
 CUDA_DEVICE=${8}
+CKPT=${9}
+USE_SAM=${10}
 
 if [[ $DATASET = '5data' ]]
 then
@@ -25,6 +27,21 @@ else
     PT_FLAG=""
 fi
 
+if [[ $CKPT = 'imagenetinit_ckpt' ]]
+then
+    CKPT_FLAG="--checkpoint imagenet_pretrain/last_checkpoint.pt --num-excluded-classes 267"
+else
+    CKPT_FLAG=""
+fi
+
+if [[ $USE_SAM = 'sam' ]]
+then
+    echo ${USE_SAM}
+    SAM_FLAG="--sam"
+else
+    SAM_FLAG=""
+fi
+
 CUDA_VISIBLE_DEVICES=${CUDA_DEVICE} python -m img_exps.main_vision \
     --dataset ${DATASET} \
     --method ${METHOD} \
@@ -33,5 +50,5 @@ CUDA_VISIBLE_DEVICES=${CUDA_DEVICE} python -m img_exps.main_vision \
     --seed ${SEED} \
     --batch-size ${BATCH_SIZE} \
     --epochs-per-task ${EPOCHS} \
-    --save-models ${PT_FLAG} \
+    --save-models ${PT_FLAG} ${CKPT_FLAG} ${SAM_FLAG} \
     --lr 0.01

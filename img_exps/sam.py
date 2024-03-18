@@ -3,6 +3,7 @@ Based on https://github.com/davda54/sam
 '''
 
 import torch
+import torch.nn as nn
 
 
 class SAM(torch.optim.Optimizer):

@@ -71,11 +71,13 @@ To run the vision experiments and create the necessary model checkpoints for ran
     {DATASET} \ 
     {METHOD} \
     ./data \
-    ./output/{DATASET}/random/run_1 \
+    ./output/{DATASET}/{METHOD}/random/run_1 \
      1 \
      random \
      5 \
-     0
+     {CUDA_DEVICE} \
+     rndminit_ckpt \
+     no_sam
 ```
 where `{DATASET}` is one of `"5data", "cifar50", "cifar100"`, and `{METHOD}` is 
 one of `"sgd", "er", "ewc"`.
@@ -86,17 +88,19 @@ Similarly, to run and create the necessary model checkpoints for pre-trained ini
     {DATASET} \
     {METHOD} \
     ./data \
-    ./output/{DATASET}/pt/run_1 \
+    ./output/{DATASET}/{METHOD}/pt/run_1 \
     1 \
     pt \
     5 \
-    0
+    {CUDA_DEVICE} \
+    imagenetinit_ckpt \
+    no_sam
 ```
 where `{DATASET}` is one of `"5data", "cifar50", "cifar100"`, and `{METHOD}` is 
 one of `"sgd", "er", "ewc"`.
 
 The above run commands will create a folder called `output` with all of the relevant data for the 
-run as well as the model checkpoints. In our experiments, we run this with 5 different random seeds. The data in `Table 1` for vision experiments is generated based on the `log.json` files in each run folder.
+run as well as the model checkpoints. In our experiments, we run this with 5 different random seeds. The data in `Table 5` for vision experiments is generated based on the `log.json` files in each run folder.
 
 ## 2. Running the analysis
 
